@@ -276,8 +276,8 @@ public:
     const char* getName() const override { return "DynEQ"; }
     const char* getLabel() const override { return "dyneq"; }
     const char* getDescription() const override { return "Dynamic equaliser with per-band dynamics (bell/shelf filters)."; }
-    const char* Maker() const override { return "OpenAudio"; }
-    const char* getMakerURL() const override { return "https://github.com/openaudio"; }
+    const char* getMaker() const override { return "OpenAudio"; }
+    const char* getHomePage() const override { return "https://github.com/openaudio"; }
     const char* getLicense() const override { return "ISC"; }
 
     uint32_t getVersion() const override { return d_version(1, 0, 0); }
@@ -546,14 +546,25 @@ public:
         const bool dryWet = (fMix < 0.999f);
         const float outLin = db2lin(fOutputGain);
 
-        // copy input to output if passthrough needed
-        if (outputs[0] != inputs[0])
-            std::memcpy(outputs[0], inputs[0], frames * sizeof(float));
-        if (DISTRHO_PLUGIN_NUM_OUTPUTS > 1 && outputs[1] != inputs[1])
-            std::memcpy(outputs[1], inputs[1], frames * sizeof(float));
+        // work on copies of the input; only write outputs once, at the end
+        float* const l = outputs[0];
+        float* const r = outputs[1];
 
-        float* l = outputs[0];
-        float* r = outputs[1];
+        if (outputs[0] == inputs[0])
+        {
+            std::memmove(fTempL, inputs[0], frames * sizeof(float));
+        }
+        else
+        {
+            std::memcpy(fTempL, inputs[0], frames * sizeof(float));
+        }
+        if (DISTRHO_PLUGIN_NUM_OUTPUTS > 1)
+        {
+            if (outputs[1] == inputs[1])
+                std::memmove(fTempR, inputs[1], frames * sizeof(float));
+            else
+                std::memcpy(fTempR, inputs[1], frames * sizeof(float));
+        }
 
         // per-block sub-ramp of coefficients
         for (int i = 0; i < kMaxBands; ++i)
@@ -561,7 +572,7 @@ public:
 
         for (uint32_t f = 0; f < frames; ++f)
         {
-            const float xl = l[f], xr = r[f];
+            const float xl = fTempL[f], xr = fTempR[f];
             float ol = xl, orr = xr;
 
             for (int i = 0; i < kMaxBands; ++i)
@@ -569,35 +580,31 @@ public:
                 Slot& s = fSlots[i];
                 if (i >= fNumBands || s.enabled < 0.5f)
                     continue;
-                if (s.bypass >= 0.5f)
-                {
-                    // still track the band level so re-enable is smooth
-                    continue;
-                }
+
+                // always run the filter and track the in-band level, even when
+                // bypassed, so the envelope stays coherent and re-enabling the
+                // band (or un-bypassing it) is smooth and click-free
                 const float bl = s.filter.process(ol);
                 const float br = s.filter.process(orr);
-                // band level detection uses the filtered (in-band) signal
                 fDyn[i].update(0.5f * (std::fabs(bl) + std::fabs(br)));
+
+                if (s.bypass >= 0.5f)
+                    continue; // level tracked, but no audio modification
+
                 ol = bl; orr = br;
             }
 
             if (dryWet)
             {
-                l[f] = xl + (ol - xl) * fMix;
-                r[f] = xr + (orr - xr) * fMix;
+                l[f] = (xl + (ol - xl) * fMix) * outLin;
+                r[f] = (xr + (orr - xr) * fMix) * outLin;
             }
             else
             {
-                l[f] = ol;
-                r[f] = orr;
+                l[f] = ol * outLin;
+                r[f] = orr * outLin;
             }
-            l[f] *= outLin;
-            r[f] *= outLin;
         }
-
-        // snapshot current gains for the next block
-        for (int i = 0; i < kMaxBands; ++i)
-            fSlots[i].lastAppliedGain = currentBandGainDb(i);
 
         fParamsDirty = false;
     }
@@ -664,6 +671,11 @@ private:
     Slot fSlots[kMaxBands];
     BandDynamics fDyn[kMaxBands];
     float fParamCache[kTotalParams];
+
+    // scratch buffers so we never read & write the same buffer in-place
+    static const uint32_t kMaxFrames = 8192;
+    float fTempL[kMaxFrames];
+    float fTempR[kMaxFrames];
 
     int fNumBands = kDefaultNumBands;
     float fThreshold, fRatio, fAttack, fRelease, fRange, fMix, fOutputGain;
