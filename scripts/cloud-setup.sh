@@ -48,3 +48,6 @@ make
 make test
 xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
     ./build/eq29_lv2_tests "$repo_dir/build/bin/my_dynamic_eq.lv2/" --ui
+
+xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
+    ./build/eq29_vst2_tests "$repo_dir/build/bin/my_dynamic_eq-vst2.so" --ui

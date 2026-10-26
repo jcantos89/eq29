@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 #include "DistrhoPlugin.hpp"
 #include "Engine.hpp"
+#include "PortMapping.hpp"
 #include <cstdio>
 
 START_NAMESPACE_DISTRHO
@@ -19,6 +20,7 @@ protected:
         Plugin::initAudioPort(input,index,port); port.groupId=kPortGroupStereo;
     }
     void initParameter(uint32_t index,Parameter& p) override {
+        index=eq29::toEngineParameter(index);
         const auto s=eq29::spec(index);
         char name[80],symbol[80];
         if (index<eq29::MeterBase) {
@@ -48,8 +50,8 @@ protected:
             p.enumValues.values[0]={0,"Compression"}; p.enumValues.values[1]={1,"Upward expansion"};
         }
     }
-    float getParameterValue(uint32_t i) const override { return engine_.values[i]; }
-    void setParameterValue(uint32_t i,float v) override { engine_.set(i,v); }
+    float getParameterValue(uint32_t i) const override { return engine_.values[eq29::toEngineParameter(i)]; }
+    void setParameterValue(uint32_t i,float v) override { engine_.set(eq29::toEngineParameter(i),v); }
     void activate() override { engine_.reset(); }
     void sampleRateChanged(double rate) override { engine_.setSampleRate(rate); }
     void run(const float** in,float** out,uint32_t frames) override { engine_.process(in,out,frames); }

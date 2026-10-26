@@ -1,6 +1,6 @@
-# EQ29 — My Dynamic EQ
+# EQ29 — My Dynamic EQ (LV2 + VST2)
 
-A stereo LV2 dynamic equalizer built with [DPF](https://github.com/DISTRHO/DPF)
+A stereo LV2 and VST2 dynamic equalizer built with [DPF](https://github.com/DISTRHO/DPF)
 and its official [Dear ImGui integration](https://github.com/DISTRHO/DPF-Widgets).
 Four bands are active initially; eight fixed slots are available. Bell, low-shelf,
 and high-shelf filters each have a band-local, stereo-linked peak detector.
@@ -26,7 +26,7 @@ make
 make test
 ```
 
-The output is **`build/bin/my_dynamic_eq.lv2/`**, containing `manifest.ttl`, attribution notices, the
+The LV2 output is **`build/bin/my_dynamic_eq.lv2/`**, containing `manifest.ttl`, attribution notices, the
 complete generated DSP/UI Turtle definitions, and separate DSP and GUI shared
 libraries. DPF generates control-port metadata directly from `initParameter()`;
 there is no manually maintained, potentially inconsistent second port list.
@@ -41,7 +41,54 @@ ctest --test-dir build --output-on-failure
 
 `make JOBS=4`, `make BUILD_DIR=build-debug CMAKE_FLAGS=-DCMAKE_BUILD_TYPE=Debug`,
 and `-DEQ29_BUILD_TESTS=OFF` are supported. CMake selects the host platform's
-DPF backend; only Linux/X11 is tested here. The DSP is platform-independent.
+DPF backend. Linux/X11 is tested here; Windows and macOS builds use the same DSP
+and ImGui editor with their native DPF window backends.
+
+## VST2 on Linux, Windows, and macOS
+
+The default build now creates **both LV2 and VST2**. Each operating system needs
+its own native binary; a Linux `.so` cannot run as a Windows DLL or macOS bundle.
+For a VST2-only build, no LV2 SDK or Lilv is required:
+
+```sh
+cmake -S . -B build-vst2 -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_LV2=OFF
+cmake --build build-vst2 --config Release --parallel 2
+ctest --test-dir build-vst2 -C Release --output-on-failure
+```
+
+| Platform | Toolchain | VST2 output under `build-vst2/bin/` | Typical user install location |
+| --- | --- | --- | --- |
+| Linux | GCC/Clang, X11/OpenGL development packages above | `my_dynamic_eq-vst2.so` | `~/.vst/` |
+| Windows | Visual Studio 2022 C++ desktop workload and CMake | `my_dynamic_eq-vst2.dll` | A VST2 folder configured in your DAW |
+| macOS | Xcode Command Line Tools and CMake | `my_dynamic_eq_vst2.vst` | `~/Library/Audio/Plug-Ins/VST/` |
+
+On Windows run the CMake commands in a Visual Studio developer terminal; add
+`-A x64` to the configure command when using the Visual Studio generator.
+On macOS install CMake (for example `brew install cmake`) and run `xcode-select
+--install` if necessary. For a universal macOS binary, add
+`'-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'` when configuring a **fresh** build folder;
+that architecture combination is not validated in the Linux environment.
+Use a 64-bit Cocoa-capable VST2 host on macOS. VST2 support must be enabled in
+the chosen DAW; hosts that only accept VST3 cannot load this format.
+
+Copy the Linux/Windows binary **and `my_dynamic_eq-licenses/`** from `bin/` to
+the host's configured VST2 folder. Copy the whole `.vst` bundle on macOS; its
+licenses are already inside. Rescan the plugin folder and select **My Dynamic EQ**.
+`cmake --install` stages VST2 into `<prefix>/lib/vst`; point your host there or
+copy it to the platform's user plugin directory.
+
+No proprietary VST2 SDK download is needed: DPF includes clean-room VST2 headers,
+whose license is shipped alongside the plugin. The native CI workflow builds and
+runs DSP, VST2 load, state-reload, and audio tests on Linux, Windows and macOS,
+and uploads the platform binaries as workflow artifacts. Native CI results must
+be checked separately; only the Linux build and editor are validated locally.
+
+The VST2 version exposes **98 automatable input parameters**. Session state uses
+the host's standard normalized parameter-array save/restore, including disabled
+band slots. Live meters are sent internally to the custom editor and are not
+exposed as writable VST2 parameters. `src/PortMapping.hpp` places VST2 inputs
+before outputs as required by DPF while preserving the released LV2 port layout.
+Both formats use exactly the same engine, editor, parameter ranges and defaults.
 
 ## Install and use
 
@@ -137,7 +184,10 @@ and checks actual output audio from the restored plugin.
 
 ```sh
 make test
-# Optional: instantiate the embedded LV2 GUI and render under a virtual display:
+# Optional: instantiate the VST2 editor and exercise automation under X11:
+xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
+  ./build/eq29_vst2_tests "$PWD/build/bin/my_dynamic_eq-vst2.so" --ui
+# Instantiate the embedded LV2 GUI and render under a virtual display:
 xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
   ./build/eq29_lv2_tests "$PWD/build/bin/my_dynamic_eq.lv2/" --ui
 # Host discovery:
@@ -161,7 +211,9 @@ those specific applications are not assumed to have been tested by this harness.
 - `src/PluginDSP.cpp`: DPF plugin entry point and LV2 parameter descriptions.
 - `src/Engine.hpp`, `src/Biquad.hpp`: fixed-storage stereo DSP and filter response.
 - `src/PluginUI.cpp`: ImGui editor, gestures, response graph and parameter bridge.
-- `tests/`: DSP regression tests and Lilv host/state/GUI integration harness.
+- `src/PortMapping.hpp`: VST2 parameter-order adapter; LV2 indices stay unchanged.
+- `tests/`: DSP regression tests and LV2/VST2 native host/state/GUI integration harnesses.
+- `.github/workflows/build.yml`: native Linux, Windows and macOS builds and artifacts.
 - `dpf/`, `widgets/`: upstream Git submodules pinned by this repository.
 - `scripts/cloud-setup.sh`: optional non-root Debian cloud dependency setup.
 

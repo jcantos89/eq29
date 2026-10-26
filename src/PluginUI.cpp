@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 #include "DistrhoUI.hpp"
 #include "Biquad.hpp"
+#include "PortMapping.hpp"
 #include <array>
 #include <cstdio>
 
@@ -8,6 +9,9 @@ START_NAMESPACE_DISTRHO
 class DynamicEQUI final : public UI {
     std::array<float,eq29::ParameterCount> p_=eq29::defaults();
     int selected_=0, dragging_=-1;
+    // Keep graph/editor code in engine coordinates for both plugin formats.
+    void editParameter(uint32_t id,bool started) { UI::editParameter(eq29::toHostParameter(id),started); }
+    void setParameterValue(uint32_t id,float value) { UI::setParameterValue(eq29::toHostParameter(id),value); }
     static ImU32 color(unsigned b, unsigned alpha=255) {
         constexpr unsigned colors[8][3]={{77,205,255},{126,231,157},{255,196,97},{208,150,255},
                                        {255,130,156},{100,226,211},{222,226,110},{160,176,255}};
@@ -135,6 +139,7 @@ public:
     DynamicEQUI() : UI() { setGeometryConstraints(820,620); }
 protected:
     void parameterChanged(uint32_t id,float value) override {
+        id=eq29::toEngineParameter(id);
         if (id<eq29::ParameterCount) p_[id]=eq29::sanitize(id,value);
     }
     void onImGuiDisplay() override {
