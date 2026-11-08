@@ -63,3 +63,23 @@ The workflow now uses Node 24 actions and a fixed Ubuntu 24.04 runner, preserves
 build/test exit codes when recording output, and uploads diagnostic logs even
 on failure. These diagnostic/deprecation changes do not establish that the
 underlying build or test failures are fixed.
+
+## CI diagnoses and corrections
+
+- Windows annotations exposed missing `PFNGL*PROC` OpenGL extension types in
+  DPF's NanoVG compilation. Its MSVC helper downloads headers from legacy registry
+  URLs without checking download success. EQ29 now prepares that ignored header
+  cache first, using pinned Khronos GitHub revisions, SHA-256 hashes and TLS
+  verification, and stops at configuration if verification fails.
+- The VST3 sidechain test's exact-zero check was reproduced with Clang and native
+  CPU/FMA optimization: residual `1.123091252e-23` after the preceding audio
+  signal (about -459 dBFS). This is filter-tail/floating-point residue. The test
+  now requires silence below `1e-15` (-300 dBFS), preserving a stringent leakage
+  check without requiring bitwise zero after a running IIR filter.
+- These corrections require a fresh native CI result; they do not retroactively
+  make the earlier failed runs successful.
+
+- A 1 MiB-stack reproduction also exposed oversized stack-resident FFT test
+  fixtures (Windows uses a 1 MiB default executable stack). The DSP suite now
+  owns its independent Engine fixtures on the heap; production processing still
+  uses the same preallocated fixed storage and makes no audio-thread allocations.

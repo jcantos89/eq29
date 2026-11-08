@@ -4,6 +4,7 @@
 #include <random>
 #include <stdexcept>
 #include <vector>
+#include <memory>
 
 using namespace eq29;
 static unsigned checks=0;
@@ -40,7 +41,8 @@ static double tone(Engine& e,double hz,double amplitude,double rate,bool rightOn
 int main() {
     try {
         for (double rate:{44100.,48000.,96000.,192000.}) {
-            Engine e(rate); isolate(e); e.set(param(0,Dynamics),0); e.reset();
+            auto storage=std::make_unique<Engine>(rate);
+            Engine& e=*storage; isolate(e); e.set(param(0,Dynamics),0); e.reset();
             require(std::abs(tone(e,1000,.1,rate))<.001,"flat unity");
             for (unsigned type:{Bell,LowShelf,HighShelf}) {
                 isolate(e,type); e.set(param(0,Dynamics),0); e.set(param(0,Q),.70710678f);
@@ -64,7 +66,8 @@ int main() {
             require(e.values[meter(0)]>7.8,"right channel triggers linked detector");
         }
         for(unsigned type:{LowShelf,HighShelf}) {
-            Engine shelf; isolate(shelf,type); shelf.set(param(0,Threshold),-30);
+            auto storage=std::make_unique<Engine>();
+            Engine& shelf=*storage; isolate(shelf,type); shelf.set(param(0,Threshold),-30);
             shelf.set(param(0,Range),8); shelf.reset();
             const double on=type==LowShelf?100:10000,off=type==LowShelf?10000:100;
             tone(shelf,on,.5,48000);
@@ -73,23 +76,26 @@ int main() {
             require(std::abs(shelf.values[meter(0)])<.1,"shelf detector rejects opposite region");
         }
         auto timingEngine=[](float attack,float release) {
-            Engine e; isolate(e); e.set(param(0,Threshold),-40); e.set(param(0,Range),24);
-            e.set(param(0,Attack),attack); e.set(param(0,Release),release); e.reset();return e;
+            auto e=std::make_unique<Engine>(); isolate(*e); e->set(param(0,Threshold),-40); e->set(param(0,Range),24);
+            e->set(param(0,Attack),attack); e->set(param(0,Release),release); e->reset();return e;
         };
-        Engine fast=timingEngine(.1f,5),slow=timingEngine(200,1000);
+        auto fastStorage=timingEngine(.1f,5),slowStorage=timingEngine(200,1000);
+        Engine& fast=*fastStorage;Engine& slow=*slowStorage;
         std::array<float,4800> burst{},timedL{},timedR{},silence{};
         for(unsigned i=0;i<burst.size();++i) burst[i]=float(.5*std::sin(2*Pi*1000*i/48000));
         const float* burstIn[]={burst.data(),burst.data()}; float* timedOut[]={timedL.data(),timedR.data()};
         fast.process(burstIn,timedOut,480); slow.process(burstIn,timedOut,480);
         require(fast.values[meter(0)]<slow.values[meter(0)]-3,"attack setting changes transient response");
-        fast=timingEngine(1,5); slow=timingEngine(1,1000);
+        fast=*timingEngine(1,5); slow=*timingEngine(1,1000);
         fast.process(burstIn,timedOut,4800); slow.process(burstIn,timedOut,4800);
         const float* silenceIn[]={silence.data(),silence.data()};
         fast.process(silenceIn,timedOut,4800); slow.process(silenceIn,timedOut,4800);
         require(std::abs(fast.values[meter(0)])<.1 && slow.values[meter(0)]<-10,
                 "release setting changes recovery time");
         // Sixteenth slot, external detector routing and absence of sidechain bleed.
-        Engine external;
+        // FFT storage is fixed in the production engine. Keep the independent
+        // test fixtures on the heap to fit Windows' default 1 MiB main stack.
+        auto externalStorage=std::make_unique<Engine>();Engine& external=*externalStorage;
         for(unsigned band=0;band<MaxBands;++band) external.set(param(band,Enabled),band==15?1:0);
         external.set(param(15,Type),Bell);external.set(param(15,Frequency),1000);
         external.set(param(15,Q),2);external.set(param(15,Threshold),-30);
@@ -115,7 +121,7 @@ int main() {
         route(1000,true);
         for(auto sample:processedL) require(sample==0,"external sidechain never enters audio output");
         // Measured spectra must follow actual audio and show the applied EQ gain.
-        Engine spectrum;isolate(spectrum);spectrum.set(param(0,Dynamics),0);spectrum.set(param(0,Gain),6);spectrum.reset();
+        auto spectrumStorage=std::make_unique<Engine>();Engine& spectrum=*spectrumStorage;isolate(spectrum);spectrum.set(param(0,Dynamics),0);spectrum.set(param(0,Gain),6);spectrum.reset();
         tone(spectrum,1000,.1,48000);
         unsigned peak=0;
         for(unsigned i=1;i<SpectrumBins;++i) if(spectrum.values[SpectrumInBase+i]>spectrum.values[SpectrumInBase+peak]) peak=i;
@@ -132,7 +138,8 @@ int main() {
         const float* zeroIn[]={zero,zero};float* zeroOut[]={outZero,outZero};spectrum.process(zeroIn,zeroOut,1);
         require(spectrum.values[SpectrumInBase+peak]==-100,"spectrum can be disabled");
         // Host block partitions must not affect the control-rate scheduling or samples.
-        Engine a,b; isolate(a); isolate(b); a.reset(); b.reset();
+        auto aStorage=std::make_unique<Engine>(),bStorage=std::make_unique<Engine>();
+        Engine& a=*aStorage;Engine& b=*bStorage; isolate(a); isolate(b); a.reset(); b.reset();
         std::vector<float> signal(4096),oa(4096),ob(4096),ra(4096),rb(4096);
         std::mt19937 gen(29); std::uniform_real_distribution<float> noise(-.2f,.2f);
         for(auto& x:signal) x=noise(gen);
@@ -144,7 +151,7 @@ int main() {
         }
         require(oa==ob,"block-size invariant processing");
         // Parameter validation and worst-case automation stress, including all eight slots.
-        Engine stress;
+        auto stressStorage=std::make_unique<Engine>();Engine& stress=*stressStorage;
         stress.set(param(0,Frequency),NAN); require(stress.values[param(0,Frequency)]==spec(param(0,Frequency)).def,"NaN parameter default");
         stress.set(param(0,Q),100); require(stress.values[param(0,Q)]==12,"parameter clamp");
         float l[127]{},r[127]{},ol[127]{},orr[127]{}; const float* ip[]={l,r};float* op[]={ol,orr};

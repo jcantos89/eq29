@@ -178,6 +178,9 @@ int main(int argc,char** argv) {
         data.output_params=reinterpret_cast<v3_param_changes**>(&outputHandle);
         auto run=[&](bool sendChanges,double sideHz,bool silentMain=false) {
             double inPower=0,outPower=0;
+            // After a real signal, IIR tails and fused multiply-add rounding need
+            // not reach binary zero. -300 dBFS still excludes any signal leakage.
+            constexpr float silenceFloor=1.e-15f;
             for(unsigned block=0;block<240;++block) {
                 for(unsigned i=0;i<256;++i) {
                     const double t=(block*256+i)/48000.;
@@ -188,7 +191,7 @@ int main(int argc,char** argv) {
                 require(v3_cpp_obj(processor)->process(processor,&data)==V3_OK,"VST3 audio callback");
                 for(unsigned i=0;i<256;++i) {
                     require(std::isfinite(outL[i]) && std::isfinite(outR[i]),"finite VST3 output");
-                    if(silentMain && block>120 && (outL[i]!=0 || outR[i]!=0)) {
+                    if(silentMain && block>120 && (std::abs(outL[i])>silenceFloor || std::abs(outR[i])>silenceFloor)) {
                         std::ostringstream details;
                         details<<"no sidechain leakage: residual "<<std::scientific<<std::setprecision(9)
                                <<std::max(std::abs(outL[i]),std::abs(outR[i]))<<" at block "<<block;

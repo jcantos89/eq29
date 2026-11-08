@@ -36,7 +36,8 @@ The managed cloud image activates its local tool prefix automatically through
 `make`; `scripts/cloud-setup.sh` can reproduce that non-root Debian setup.
 
 On **Windows**, install Visual Studio 2022's C++ desktop workload and CMake. In a
-Visual Studio developer terminal:
+Visual Studio developer terminal (the first configure downloads two official,
+revision-pinned OpenGL extension headers with TLS and SHA-256 verification):
 
 ```powershell
 cmake -S . -B build -A x64
