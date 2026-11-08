@@ -9,6 +9,8 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
 #include <vector>
 #ifdef _WIN32
 # define NOMINMAX
@@ -186,7 +188,12 @@ int main(int argc,char** argv) {
                 require(v3_cpp_obj(processor)->process(processor,&data)==V3_OK,"VST3 audio callback");
                 for(unsigned i=0;i<256;++i) {
                     require(std::isfinite(outL[i]) && std::isfinite(outR[i]),"finite VST3 output");
-                    if(silentMain && block>120)require(outL[i]==0 && outR[i]==0,"no sidechain leakage");
+                    if(silentMain && block>120 && (outL[i]!=0 || outR[i]!=0)) {
+                        std::ostringstream details;
+                        details<<"no sidechain leakage: residual "<<std::scientific<<std::setprecision(9)
+                               <<std::max(std::abs(outL[i]),std::abs(outR[i]))<<" at block "<<block;
+                        throw std::runtime_error(details.str());
+                    }
                     if(block>120){inPower+=mainL[i]*mainL[i];outPower+=outL[i]*outL[i];}
                 }
             }
