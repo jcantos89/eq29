@@ -49,3 +49,17 @@ sidechain inputs, and VST2 sidechain availability depends on host pin routing.
 DPF's bundled stb_image implementation emits a GCC warning; it does not prevent
 compilation. Our editor does not decode PNG files. Prebuilt Linux files target
 the current Debian runtime ABI; build from source for other runtime ABIs.
+
+## Reported GitHub CI failure
+
+Run [42499113860](https://github.com/jcantos89/eq29/actions/runs/42499113860)
+failed on all three platforms: Windows in the build step (exit 1), Ubuntu and
+macOS in the CTest step (exit 8). The four suites still pass when rerun in this
+Linux workspace. The annotations alone do not identify the compiler error or
+which test failed; the detailed job logs require GitHub sign-in and are not
+accessible with this environment's available connection.
+
+The workflow now uses Node 24 actions and a fixed Ubuntu 24.04 runner, preserves
+build/test exit codes when recording output, and uploads diagnostic logs even
+on failure. These diagnostic/deprecation changes do not establish that the
+underlying build or test failures are fixed.

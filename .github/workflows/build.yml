@@ -9,7 +9,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             lv2: 'ON'
           - os: windows-latest
             lv2: 'ON'
@@ -17,7 +17,7 @@ jobs:
             lv2: 'ON'
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install Linux build and validation dependencies
@@ -32,9 +32,15 @@ jobs:
         if: runner.os == 'macOS'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_LV2=ON -DEQ29_BUILD_VST2=ON -DEQ29_BUILD_VST3=ON '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --parallel 2 2>&1 | tee build/build.log
       - name: Test DSP and native plugin loading/state/audio
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release --output-on-failure 2>&1 | tee build/test.log
       - name: Test embedded Linux editors and automation
         if: runner.os == 'Linux'
         run: |
@@ -43,8 +49,20 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' ./build/eq29_lv2_tests "$PWD/build/bin/my_dynamic_eq.lv2/" --ui
       - name: Validate installation
         run: cmake --install build --config Release --prefix stage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: eq29-1.1.0-${{ runner.os }}-${{ runner.os == 'macOS' && 'universal' || runner.arch }}
           path: build/bin/
           if-no-files-found: error
+
+      - name: Upload diagnostic logs even when a job fails
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: eq29-logs-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build/build.log
+            build/test.log
+            build/Testing/Temporary/
+            build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
