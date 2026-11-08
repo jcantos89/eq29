@@ -35,12 +35,24 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --config Release --parallel 2 2>&1 | tee build/build.log
+          if cmake --build build --config Release --parallel 2 2>&1 | tee build/build.log; then
+            exit 0
+          else
+            result=$?
+            cmake -DLOG_FILE=build/build.log -DSTAGE=Build -P scripts/report-ci-failure.cmake
+            exit "$result"
+          fi
       - name: Test DSP and native plugin loading/state/audio
         shell: bash
         run: |
           set -o pipefail
-          ctest --test-dir build -C Release --output-on-failure 2>&1 | tee build/test.log
+          if ctest --test-dir build -C Release --output-on-failure 2>&1 | tee build/test.log; then
+            exit 0
+          else
+            result=$?
+            cmake -DLOG_FILE=build/test.log -DSTAGE=Tests -P scripts/report-ci-failure.cmake
+            exit "$result"
+          fi
       - name: Test embedded Linux editors and automation
         if: runner.os == 'Linux'
         run: |
