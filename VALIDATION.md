@@ -83,3 +83,8 @@ underlying build or test failures are fixed.
   fixtures (Windows uses a 1 MiB default executable stack). The DSP suite now
   owns its independent Engine fixtures on the heap; production processing still
   uses the same preallocated fixed storage and makes no audio-thread allocations.
+
+- Once the Windows GL headers were fixed, its next compiler errors identified
+  two GNU `x ?: fallback` expressions in pinned DPF-Widgets. CMake now generates
+  a standard C++ conditional-expression copy for compilation. The upstream
+  submodule is unchanged, and Linux/Clang also compile the generated copy.

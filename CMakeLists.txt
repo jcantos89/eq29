@@ -19,12 +19,13 @@ if(MSVC)
   include(cmake/PrepareWindowsOpenGL.cmake)
 endif()
 add_subdirectory(dpf)
+include(cmake/PrepareImGui.cmake)
 function(eq29_add_plugin name format)
   dpf_add_plugin(${name}
     TARGETS ${format}
     UI_TYPE opengl
     FILES_DSP src/PluginDSP.cpp
-    FILES_UI src/PluginUI.cpp widgets/opengl/DearImGui.cpp)
+    FILES_UI src/PluginUI.cpp "${EQ29_IMGUI_SOURCE}")
   target_include_directories(${name} PUBLIC src widgets/opengl)
 endfunction()
 if(EQ29_BUILD_LV2)
