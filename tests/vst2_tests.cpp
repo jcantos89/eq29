@@ -54,12 +54,13 @@ static void close(vst_effect* fx) {
     dispatch(fx,VST_EFFECT_OPCODE_SUSPEND,0,0);
     dispatch(fx,VST_EFFECT_OPCODE_DESTROY);
 }
-static double tone(vst_effect* fx) {
-    std::array<float,256> left{},right{},outL{},outR{};
-    const float* input[]={left.data(),right.data()};float* output[]={outL.data(),outR.data()};
+static double tone(vst_effect* fx,double sideHz=0) {
+    std::array<float,256> left{},right{},outL{},outR{},sc{};
+    const float* input[]={left.data(),right.data(),sc.data(),sc.data()};float* output[]={outL.data(),outR.data()};
     double inPower=0,outPower=0;
     for(unsigned block=0;block<200;++block) {
         for(unsigned i=0;i<256;++i) left[i]=right[i]=float(.25*std::sin(2*3.141592653589793*1000*(block*256+i)/48000));
+        for(unsigned i=0;i<256;++i) sc[i]=float(.5*std::sin(2*3.141592653589793*sideHz*(block*256+i)/48000));
         fx->process_float(fx,input,output,256);
         for(unsigned i=0;i<256;++i) {
             require(std::isfinite(outL[i])&&std::isfinite(outR[i]),"finite VST2 output");
@@ -110,8 +111,9 @@ static void gui(vst_effect* fx) {
     move(277,200);button(true,277,200);move(371,171);button(false,371,171);
     require(get(fx,param(0,Frequency))>180 && get(fx,param(0,Frequency))<220,"VST2 node frequency automation");
     require(get(fx,param(0,Gain))>4 && get(fx,param(0,Gain))<8,"VST2 node gain automation");
+    click(278,430);require(get(fx,SidechainBase)>.5f,"VST2 GUI external sidechain selection");
     // Bypass lies after the eight band's parameters: exercise its mapping too.
-    click(344,23);require(get(fx,Bypass)>.5f,"VST2 GUI bypass mapping");
+    click(350,23);require(get(fx,Bypass)>.5f,"VST2 GUI bypass mapping");
     require(writes>10 && beginEdits>0 && beginEdits==endEdits,"balanced VST2 automation gestures");
     dispatch(fx,VST_EFFECT_OPCODE_WINDOW_DESTROY);XDestroyWindow(display,parent);XCloseDisplay(display);
     std::cout<<"VST2 GUI: embedded/rendered, add/remove, node dragging and bypass automation passed.\n";
@@ -131,7 +133,7 @@ int main(int argc,char** argv) {
         require(entry,"VSTPluginMain export");
         auto create=[&]() {
             auto* fx=entry(host);require(fx && fx->magic_number==0x56737450,"VST2 descriptor");
-            require(fx->num_inputs==2 && fx->num_outputs==2 && fx->num_params==int(VstInputCount),"stereo and all 98 input parameters exposed");
+            require(fx->num_inputs==4 && fx->num_outputs==2 && fx->num_params==int(VstInputCount),"stereo and all 211 input parameters exposed");
             require(fx->process_float && (fx->flags&1),"VST2 DSP and custom editor present");
             require(dispatch(fx,VST_EFFECT_OPCODE_CREATE)==1,"VST2 initialize");
             dispatch(fx,VST_EFFECT_OPCODE_SET_SAMPLE_RATE,0,0,nullptr,48000);
@@ -166,6 +168,12 @@ int main(int argc,char** argv) {
         set(fx,param(0,Dynamics),0);set(fx,OutputGain,3);
         require(std::abs(tone(fx)-3)<.05,"VST2 output gain mapping");
         set(fx,Bypass,1);require(std::abs(tone(fx))<.01,"VST2 bypass mapping");
+        set(fx,Bypass,0);set(fx,OutputGain,0);
+        set(fx,param(0,Dynamics),1);set(fx,param(0,Mode),0);set(fx,param(0,Threshold),-30);
+        set(fx,param(0,Q),2);set(fx,param(0,Release),40);set(fx,SidechainBase,1);
+        require(std::abs(tone(fx))<.1,"VST2 unconnected sidechain does not self-trigger");
+        require(tone(fx,1000)<-7.8,"VST2 channels 3/4 trigger external compression");
+        require(std::abs(tone(fx,10000))<.1,"VST2 external sidechain remains band selective");
         close(fx);
         if(argc>2 && std::strcmp(argv[2],"--ui")==0) {
 #ifdef EQ29_TEST_X11
@@ -179,7 +187,7 @@ int main(int argc,char** argv) {
 #else
         dlclose(library);
 #endif
-        std::cout<<"VST2: native load, 98 inputs, state reload, static/dynamic audio, output gain and bypass passed.\n";
+        std::cout<<"VST2: native load, 211 inputs, state reload, static/dynamic audio, output gain and bypass passed.\n";
         return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 }

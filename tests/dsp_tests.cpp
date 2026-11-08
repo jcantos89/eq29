@@ -52,25 +52,25 @@ int main() {
             isolate(e); e.set(param(0,Gain),0); e.set(param(0,Dynamics),1);
             e.set(param(0,Threshold),-30); e.set(param(0,Ratio),4); e.set(param(0,Range),8); e.reset();
             require(tone(e,1000,.5,rate)<-7.8,"in-band compression");
-            require(std::abs(e.values[MeterBase]+8)<.05,"compression range cap");
+            require(std::abs(e.values[meter(0)]+8)<.05,"compression range cap");
             e.reset(); require(std::abs(tone(e,10000,.1,rate))<.1,"off-band rejection");
-            require(std::abs(e.values[MeterBase])<.1,"off-band detector stays below threshold");
+            require(std::abs(e.values[meter(0)])<.1,"off-band detector stays below threshold");
             e.set(param(0,Mode),1); e.reset();
             require(tone(e,1000,.5,rate)>7.8,"upward expansion");
             e.set(param(0,Ratio),1); e.reset(); require(std::abs(tone(e,1000,.1,rate))<.01,"1:1 disables dynamics");
             e.set(param(0,Ratio),4); e.set(Bypass,1); e.reset();
             require(std::abs(tone(e,1000,.1,rate))<.001,"bypass unity");
             e.set(Bypass,0); e.reset(); tone(e,1000,.5,rate,true);
-            require(e.values[MeterBase]>7.8,"right channel triggers linked detector");
+            require(e.values[meter(0)]>7.8,"right channel triggers linked detector");
         }
         for(unsigned type:{LowShelf,HighShelf}) {
             Engine shelf; isolate(shelf,type); shelf.set(param(0,Threshold),-30);
             shelf.set(param(0,Range),8); shelf.reset();
             const double on=type==LowShelf?100:10000,off=type==LowShelf?10000:100;
             tone(shelf,on,.5,48000);
-            require(shelf.values[MeterBase]<-7.8,"shelf detector triggers in its own region");
+            require(shelf.values[meter(0)]<-7.8,"shelf detector triggers in its own region");
             shelf.reset(); tone(shelf,off,.1,48000);
-            require(std::abs(shelf.values[MeterBase])<.1,"shelf detector rejects opposite region");
+            require(std::abs(shelf.values[meter(0)])<.1,"shelf detector rejects opposite region");
         }
         auto timingEngine=[](float attack,float release) {
             Engine e; isolate(e); e.set(param(0,Threshold),-40); e.set(param(0,Range),24);
@@ -81,13 +81,56 @@ int main() {
         for(unsigned i=0;i<burst.size();++i) burst[i]=float(.5*std::sin(2*Pi*1000*i/48000));
         const float* burstIn[]={burst.data(),burst.data()}; float* timedOut[]={timedL.data(),timedR.data()};
         fast.process(burstIn,timedOut,480); slow.process(burstIn,timedOut,480);
-        require(fast.values[MeterBase]<slow.values[MeterBase]-3,"attack setting changes transient response");
+        require(fast.values[meter(0)]<slow.values[meter(0)]-3,"attack setting changes transient response");
         fast=timingEngine(1,5); slow=timingEngine(1,1000);
         fast.process(burstIn,timedOut,4800); slow.process(burstIn,timedOut,4800);
         const float* silenceIn[]={silence.data(),silence.data()};
         fast.process(silenceIn,timedOut,4800); slow.process(silenceIn,timedOut,4800);
-        require(std::abs(fast.values[MeterBase])<.1 && slow.values[MeterBase]<-10,
+        require(std::abs(fast.values[meter(0)])<.1 && slow.values[meter(0)]<-10,
                 "release setting changes recovery time");
+        // Sixteenth slot, external detector routing and absence of sidechain bleed.
+        Engine external;
+        for(unsigned band=0;band<MaxBands;++band) external.set(param(band,Enabled),band==15?1:0);
+        external.set(param(15,Type),Bell);external.set(param(15,Frequency),1000);
+        external.set(param(15,Q),2);external.set(param(15,Threshold),-30);
+        external.set(param(15,Range),8);external.set(param(15,Attack),1);
+        external.set(SidechainBase+15,1);external.reset();
+        require(std::abs(tone(external,1000,.1,48000))<.01,"unconnected external sidechain is silent, not self input");
+        std::array<float,256> main{},side{},processedL{},processedR{};
+        const float* mainIn[]={main.data(),main.data()};const float* scIn[]={side.data(),side.data()};
+        float* routedOut[]={processedL.data(),processedR.data()};
+        auto route=[&](double sideHz,bool mainSilent) {
+            external.reset();
+            for(unsigned block=0;block<300;++block) {
+                for(unsigned i=0;i<256;++i) {
+                    const double time=(block*256+i)/48000.;
+                    main[i]=mainSilent?0:float(.1*std::sin(2*Pi*1000*time));
+                    side[i]=float(.5*std::sin(2*Pi*sideHz*time));
+                }
+                external.process(mainIn,routedOut,256,scIn);
+            }
+        };
+        route(1000,false);require(external.values[meter(15)]<-7.8,"band 16 external sidechain triggers compression");
+        route(10000,false);require(std::abs(external.values[meter(15)])<.1,"external detection remains band selective");
+        route(1000,true);
+        for(auto sample:processedL) require(sample==0,"external sidechain never enters audio output");
+        // Measured spectra must follow actual audio and show the applied EQ gain.
+        Engine spectrum;isolate(spectrum);spectrum.set(param(0,Dynamics),0);spectrum.set(param(0,Gain),6);spectrum.reset();
+        tone(spectrum,1000,.1,48000);
+        unsigned peak=0;
+        for(unsigned i=1;i<SpectrumBins;++i) if(spectrum.values[SpectrumInBase+i]>spectrum.values[SpectrumInBase+peak]) peak=i;
+        require(std::abs(spectrumFrequency(peak,48000)-1000)<100,"live spectrum identifies the input tone");
+        require(std::abs(spectrum.values[SpectrumInBase+peak]+20)<2,"FFT amplitude calibrated in dBFS");
+        require(std::abs(spectrum.values[SpectrumOutBase+peak]-spectrum.values[SpectrumInBase+peak]-6)<.2,
+                "output spectrum reflects actual EQ processing");
+        Spectrum antiPhase;antiPhase.reset(48000);
+        for(unsigned n=0;n<8192;++n) {
+            float x=float(.25*std::sin(2*Pi*1000*n/48000));antiPhase.push(x,-x);
+        }
+        require(*std::max_element(antiPhase.levels.begin(),antiPhase.levels.end())>-15,"antiphase stereo remains visible");
+        spectrum.set(AnalyzerMode,0);float zero[1]{},outZero[1]{};
+        const float* zeroIn[]={zero,zero};float* zeroOut[]={outZero,outZero};spectrum.process(zeroIn,zeroOut,1);
+        require(spectrum.values[SpectrumInBase+peak]==-100,"spectrum can be disabled");
         // Host block partitions must not affect the control-rate scheduling or samples.
         Engine a,b; isolate(a); isolate(b); a.reset(); b.reset();
         std::vector<float> signal(4096),oa(4096),ob(4096),ra(4096),rb(4096);

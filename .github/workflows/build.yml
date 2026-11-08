@@ -12,9 +12,9 @@ jobs:
           - os: ubuntu-latest
             lv2: 'ON'
           - os: windows-latest
-            lv2: 'OFF'
+            lv2: 'ON'
           - os: macos-latest
-            lv2: 'OFF'
+            lv2: 'ON'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +26,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxrender-dev libgl1-mesa-dev liblilv-dev xvfb xauth
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_VST2=ON -DEQ29_BUILD_LV2=${{ matrix.lv2 }}
+        if: runner.os != 'macOS'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_VST2=ON -DEQ29_BUILD_VST3=ON -DEQ29_BUILD_LV2=${{ matrix.lv2 }}
+      - name: Configure macOS universal LV2, VST2 and VST3
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_LV2=ON -DEQ29_BUILD_VST2=ON -DEQ29_BUILD_VST3=ON '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Test DSP and native plugin loading/state/audio
@@ -35,11 +39,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' ./build/eq29_vst2_tests "$PWD/build/bin/my_dynamic_eq-vst2.so" --ui
+          xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' ./build/eq29_vst3_tests "$PWD/build/bin/my_dynamic_eq_vst3.vst3/Contents/x86_64-linux/my_dynamic_eq_vst3.so" --ui
           xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' ./build/eq29_lv2_tests "$PWD/build/bin/my_dynamic_eq.lv2/" --ui
       - name: Validate installation
         run: cmake --install build --config Release --prefix stage
       - uses: actions/upload-artifact@v4
         with:
-          name: eq29-${{ runner.os }}-${{ runner.arch }}
+          name: eq29-1.1.0-${{ runner.os }}-${{ runner.os == 'macOS' && 'universal' || runner.arch }}
           path: build/bin/
           if-no-files-found: error

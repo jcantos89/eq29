@@ -1,25 +1,30 @@
 // SPDX-License-Identifier: CC0-1.0
 #pragma once
 #include "Parameters.hpp"
-
 namespace eq29 {
-// Engine indices and released LV2 ports remain unchanged. DPF requires VST2
-// inputs to precede outputs, and hides the trailing meters from VST automation.
+constexpr std::array<unsigned,ParameterCount> makeHostOrder() {
+    std::array<unsigned,ParameterCount> order{};unsigned n=0;
+    for(unsigned i=0;i<MeterBase;++i) order[n++]=i;
+    order[n++]=Bypass;order[n++]=OutputGain; // Preserve the original VST2 98 inputs.
+    for(unsigned i=ExpandedBandBase;i<ExtraMeterBase;++i) order[n++]=i;
+    for(unsigned i=SidechainBase;i<=AnalyzerMode;++i) order[n++]=i;
+    for(unsigned i=0;i<ParameterCount;++i) if(isOutput(i)) order[n++]=i;
+    return order;
+}
+inline constexpr auto HostOrder=makeHostOrder();
 constexpr unsigned toEngineParameter(unsigned host) {
 #ifdef EQ29_VST2_PORT_ORDER
-    if (host==MeterBase) return Bypass;
-    if (host==MeterBase+1) return OutputGain;
-    if (host>=MeterBase+2 && host<SampleRate) return host-2;
-#endif
+    return HostOrder[host];
+#else
     return host;
+#endif
 }
 constexpr unsigned toHostParameter(unsigned engine) {
 #ifdef EQ29_VST2_PORT_ORDER
-    if (engine==Bypass) return MeterBase;
-    if (engine==OutputGain) return MeterBase+1;
-    if (engine>=MeterBase && engine<Bypass) return engine+2;
+    for(unsigned h=0;h<ParameterCount;++h) if(HostOrder[h]==engine) return h;
 #endif
     return engine;
 }
-constexpr unsigned VstInputCount=MeterBase+2;
+constexpr unsigned VstInputCount=InputCount;
+static_assert(HostOrder[96]==Bypass && HostOrder[97]==OutputGain,"Legacy VST automation must remain stable");
 }

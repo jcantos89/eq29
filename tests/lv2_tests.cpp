@@ -101,21 +101,25 @@ int main(int argc,char** argv) {
                 ports.control[i]=std::isfinite(def[i])?def[i]:0; ++controls;
             }
         }
-        require(inputs.size()==2&&outputs.size()==2&&controls==eq29::ParameterCount,"stereo audio and complete control ports");
+        require(inputs.size()==4&&outputs.size()==2&&controls==eq29::ParameterCount,"stereo audio and complete control ports");
         auto* instance=lilv_plugin_instantiate(plugin,48000,features); require(instance,"LV2 instantiate");
-        std::array<std::array<float,256>,4> audioBuffers{};
+        std::array<std::array<float,256>,6> audioBuffers{};
         for(unsigned i=0;i<count;++i) if(lilv_port_is_a(plugin,lilv_plugin_get_port_by_index(plugin,i),control))
             lilv_instance_connect_port(instance,i,&ports.control[i]);
         for(unsigned i=0;i<2;++i) {
             lilv_instance_connect_port(instance,inputs[i],audioBuffers[i].data());
             lilv_instance_connect_port(instance,outputs[i],audioBuffers[i+2].data());
         }
+        lilv_instance_connect_port(instance,inputs[2],audioBuffers[4].data());
+        lilv_instance_connect_port(instance,inputs[3],audioBuffers[5].data());
         // Configure a nontrivial state with a removed default band and a newly enabled slot.
         ports.at("band1_type")=0; ports.at("band1_frequency")=1000; ports.at("band1_gain")=6;
         ports.at("band1_dynamics")=0; ports.at("band2_enabled")=0; ports.at("band3_enabled")=0;
         ports.at("band4_enabled")=0; ports.at("band8_enabled")=1; ports.at("band8_type")=2;
         ports.at("band8_gain")=-3; ports.at("band8_frequency")=6000; ports.at("band8_threshold")=-31;
         ports.at("band8_ratio")=7; ports.at("band8_attack")=17; ports.at("band8_release")=432;
+        ports.at("band16_frequency")=1500;ports.at("band16_ratio")=9;
+        ports.at("band16_external_sidechain")=1;
         ports.at("band8_range")=9; ports.at("band8_mode")=1; ports.at("band8_dynamics")=0;
         lilv_instance_activate(instance);
         auto* state=lilv_state_new_from_instance(plugin,instance,&map,nullptr,nullptr,nullptr,nullptr,Ports::get,&ports,0,features);
@@ -129,10 +133,12 @@ int main(int argc,char** argv) {
         unsigned inputCount=0;
         for(unsigned i=0;i<count;++i) if(ports.input[i]) { ++inputCount; require(ports.control[i]==saved[i],"parameter round trip"); }
         require(ports.restored==inputCount,"restore every input control");
-        auto runTone=[&](unsigned blocks) {
+        auto runTone=[&](unsigned blocks,double sideHz=0) {
             double powerIn=0,powerOut=0;
             for(unsigned block=0;block<blocks;++block) {
                 for(unsigned i=0;i<256;++i) audioBuffers[0][i]=audioBuffers[1][i]=float(.1*std::sin(2*3.141592653589793*1000*(block*256+i)/48000));
+                for(unsigned i=0;i<256;++i)
+                    audioBuffers[4][i]=audioBuffers[5][i]=float(.5*std::sin(2*3.141592653589793*sideHz*(block*256+i)/48000));
                 lilv_instance_run(instance,256);
                 for(unsigned i=0;i<256;++i) {
                     require(std::isfinite(audioBuffers[2][i])&&std::isfinite(audioBuffers[3][i]),"LV2 finite output");
@@ -148,6 +154,18 @@ int main(int argc,char** argv) {
         require(ports.at("band1_dynamic_gain")<-7.7,"LV2 live output meter");
         require(ports.at("sample_rate")==48000,"sample-rate output");
         ports.at("bypass")=1; require(std::abs(runTone(100))<.01,"LV2 bypass");
+        ports.at("bypass")=0;ports.at("band1_external_sidechain")=1;ports.at("band1_threshold")=-30;
+        ports.at("band1_q")=2;ports.at("band1_release")=40;
+        require(std::abs(runTone(200))<.1,"LV2 unconnected external sidechain stays silent");
+        require(runTone(200,1000)<-7.7,"LV2 external sidechain routes to detector");
+        require(std::abs(runTone(200,10000))<.1,"LV2 external sidechain remains frequency selective");
+        ports.at("band1_external_sidechain")=0;ports.at("bypass")=1;
+        runTone(100);
+        float maxSpectrum=-100;
+        for(unsigned bin=0;bin<eq29::SpectrumBins;++bin) {
+            maxSpectrum=std::max(maxSpectrum,ports.at("spectrum_input_"+std::to_string(bin)));
+        }
+        require(maxSpectrum>-25,"LV2 measured spectrum is available to GUI");
         auto* uis=lilv_plugin_get_uis(plugin); require(lilv_uis_size(uis)==1,"one registered custom UI");
         const auto* ui=lilv_uis_get(uis,lilv_uis_begin(uis));
         char* binary=lilv_node_get_path(lilv_ui_get_binary_uri(ui),nullptr);
@@ -213,6 +231,13 @@ int main(int argc,char** argv) {
             require(ports.at("band1_gain")>4 && ports.at("band1_gain")<8,
                     "GUI node gain drag reaches host");
             require(ports.writes>10,"GUI generated real parameter writes");
+            click(278,430);
+            require(ports.at("band1_external_sidechain")==1,"GUI external detector source reaches host");
+            for(unsigned b=0;b<eq29::MaxBands;++b) {
+                auto id=ports.indices.at("band"+std::to_string(b+1)+"_enabled");
+                ports.control[id]=1;desc->port_event(handle,id,sizeof(float),0,&ports.control[id]);
+            }
+            pump(8); // All sixteen selector buttons must fit/wrap without crashing.
             XWindowAttributes attributes{};
             require(XGetWindowAttributes(display,reinterpret_cast<Window>(widget),&attributes) && attributes.width>0,"mapped GUI child window");
             XImage* image=XGetImage(display,reinterpret_cast<Window>(widget),0,0,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 #pragma once
 #include "Biquad.hpp"
+#include "Spectrum.hpp"
 
 namespace eq29 {
 // No heap allocation, locks, I/O or host callbacks in the processing path.
@@ -17,6 +18,8 @@ public:
         if (index<ParameterCount && !isOutput(index)) values[index]=sanitize(index,value);
     }
     void reset() {
+        inputSpectrum_.reset(rate_);outputSpectrum_.reset(rate_);
+        for(unsigned i=SpectrumInBase;i<ParameterCount;++i) values[i]=-100;
         tick_=0;
         fadeFrames_=std::max(1u,unsigned(.005*rate_));
         bypass_=values[Bypass]; output_=values[OutputGain];
@@ -27,21 +30,27 @@ public:
             bands_[b].hz=values[param(b,Frequency)];
             bands_[b].q=values[param(b,Q)];
             bands_[b].gain=values[param(b,Gain)]*values[param(b,Enabled)];
-            values[MeterBase+b]=0;
+            values[meter(b)]=0;
         }
     }
-    void process(const float* const* in, float* const* out, unsigned count) {
+    void process(const float* const* in, float* const* out, unsigned count, const float* const* sidechain=nullptr) {
+        const unsigned analyzer=unsigned(values[AnalyzerMode]);
+        if(analyzer==0) for(unsigned i=SpectrumInBase;i<ParameterCount;++i) values[i]=-100;
         for (unsigned n=0;n<count;++n) {
             if (tick_==0) update();
             tick_=(tick_+1)%16;
             const double dry[2]={std::isfinite(in[0][n]) ? in[0][n] : 0.0,
                                  std::isfinite(in[1][n]) ? in[1][n] : 0.0};
+            double external[2]={0,0};
+            for(unsigned ch=0;ch<2;++ch) if(sidechain && sidechain[ch])
+                external[ch]=std::isfinite(sidechain[ch][n]) ? sidechain[ch][n] : 0;
             double wet[2]={dry[0],dry[1]};
             for (unsigned b=0;b<MaxBands;++b) {
                 auto& band=bands_[b];
-                // All detectors see the original input, independent of other bands.
-                const double peak=std::max(std::abs(band.detect[0].process(dry[0])),
-                                           std::abs(band.detect[1].process(dry[1])));
+                // Each band independently chooses original input or external sidechain.
+                const double* source=values[SidechainBase+b]>.5f ? external : dry;
+                const double peak=std::max(std::abs(band.detect[0].process(source[0])),
+                                           std::abs(band.detect[1].process(source[1])));
                 const double time=peak>band.envelope ? band.attack : band.release;
                 band.envelope=time*band.envelope+(1-time)*peak;
                 for (unsigned ch=0;ch<2;++ch) {
@@ -58,6 +67,10 @@ public:
             const double makeup=dbToGain(output_);
             for (unsigned ch=0;ch<2;++ch)
                 out[ch][n]=float(bypass_*dry[ch]+(1-bypass_)*wet[ch]*makeup);
+            if((analyzer==1 || analyzer==3) && inputSpectrum_.push(float(dry[0]),float(dry[1])))
+                for(unsigned i=0;i<SpectrumBins;++i) values[SpectrumInBase+i]=inputSpectrum_.levels[i];
+            if((analyzer==2 || analyzer==3) && outputSpectrum_.push(out[0][n],out[1][n]))
+                for(unsigned i=0;i<SpectrumBins;++i) values[SpectrumOutBase+i]=outputSpectrum_.levels[i];
         }
     }
 private:
@@ -68,6 +81,7 @@ private:
         unsigned previousType=99;
     };
     std::array<Band,MaxBands> bands_{};
+    Spectrum inputSpectrum_,outputSpectrum_;
     double rate_=48000,smoothing_=0,sampleSmoothing_=0,bypass_=0,output_=0;
     unsigned tick_=0,fadeFrames_=240;
     void update() {
@@ -97,7 +111,7 @@ private:
             const auto ec=equalizer(type,s.hz,s.q,s.gain+s.dynamic,rate_);
             const auto dc=detector(type,s.hz,s.q,rate_);
             for (unsigned ch=0;ch<2;++ch) { s.eq[ch].c=ec; s.detect[ch].c=dc; }
-            values[MeterBase+b]=float(s.dynamic);
+            values[meter(b)]=float(s.dynamic);
         }
     }
 };

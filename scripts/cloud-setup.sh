@@ -51,3 +51,6 @@ xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
 
 xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
     ./build/eq29_vst2_tests "$repo_dir/build/bin/my_dynamic_eq-vst2.so" --ui
+
+xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
+    ./build/eq29_vst3_tests "$repo_dir/build/bin/my_dynamic_eq_vst3.vst3/Contents/x86_64-linux/my_dynamic_eq_vst3.so" --ui

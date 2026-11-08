@@ -13,9 +13,11 @@ class DynamicEQUI final : public UI {
     void editParameter(uint32_t id,bool started) { UI::editParameter(eq29::toHostParameter(id),started); }
     void setParameterValue(uint32_t id,float value) { UI::setParameterValue(eq29::toHostParameter(id),value); }
     static ImU32 color(unsigned b, unsigned alpha=255) {
-        constexpr unsigned colors[8][3]={{77,205,255},{126,231,157},{255,196,97},{208,150,255},
-                                       {255,130,156},{100,226,211},{222,226,110},{160,176,255}};
-        return IM_COL32(colors[b][0],colors[b][1],colors[b][2],alpha);
+        constexpr unsigned colors[16][3]={{77,205,255},{126,231,157},{255,196,97},{208,150,255},
+                                       {255,130,156},{100,226,211},{222,226,110},{160,176,255},
+                                       {244,146,87},{174,220,120},{99,174,244},{220,120,220},
+                                       {244,110,96},{77,194,168},{218,185,105},{190,159,223}};
+        return IM_COL32(colors[b%16][0],colors[b%16][1],colors[b%16][2],alpha);
     }
     float get(unsigned b,eq29::Field f) const { return p_[eq29::param(b,f)]; }
     void send(unsigned id,float value) {
@@ -74,11 +76,37 @@ class DynamicEQUI final : public UI {
             draw->AddLine(ImVec2(x,lo.y),ImVec2(x,hi.y),IM_COL32(65,78,94,100));
             draw->AddText(ImVec2(x-8,hi.y+7),IM_COL32(150,166,185,255),text);
         }
+        // Real audio spectra use their own dBFS scale, independent of EQ gain.
+        draw->PushClipRect(lo,hi,true);
+        auto spectrum=[&](unsigned first,ImU32 line,ImU32 fill) {
+            ImVec2 previous{};
+            for(unsigned bin=0;bin<eq29::SpectrumBins;++bin) {
+                const float hz=float(eq29::spectrumFrequency(bin,rate));
+                const float y=hi.y-std::clamp((p_[first+bin]+100.f)/112.f,0.f,1.f)*h;
+                const ImVec2 point(xOf(hz),y);
+                if(bin) {
+                    draw->AddQuadFilled(ImVec2(previous.x,hi.y),previous,point,ImVec2(point.x,hi.y),fill);
+                    draw->AddLine(previous,point,line,1.5f);
+                }
+                previous=point;
+            }
+        };
+        const unsigned view=unsigned(p_[eq29::AnalyzerMode]);
+        if(view==1 || view==3) spectrum(eq29::SpectrumInBase,IM_COL32(103,155,220,200),IM_COL32(82,134,210,28));
+        if(view==2 || view==3) spectrum(eq29::SpectrumOutBase,IM_COL32(241,184,87,220),IM_COL32(241,184,87,32));
+        draw->PopClipRect();
+        if(view) {
+            for(int level:{0,-24,-48,-72,-96}) {
+                const float y=hi.y-(level+100.f)/112.f*h;
+                char text[20];std::snprintf(text,sizeof(text),"%d dBFS",level);
+                draw->AddText(ImVec2(hi.x-65,y-6),IM_COL32(165,152,126,200),text);
+            }
+        }
         std::array<eq29::Coefficients,eq29::MaxBands> base,live,limit;
         for (unsigned b=0;b<eq29::MaxBands;++b) {
             const float gain=get(b,eq29::Gain),range=get(b,eq29::Dynamics)*get(b,eq29::Range)*(get(b,eq29::Mode)>.5f?1:-1);
             base[b]=eq29::equalizer(unsigned(get(b,eq29::Type)),get(b,eq29::Frequency),get(b,eq29::Q),gain,rate);
-            live[b]=eq29::equalizer(unsigned(get(b,eq29::Type)),get(b,eq29::Frequency),get(b,eq29::Q),gain+p_[eq29::MeterBase+b],rate);
+            live[b]=eq29::equalizer(unsigned(get(b,eq29::Type)),get(b,eq29::Frequency),get(b,eq29::Q),gain+p_[eq29::meter(b)],rate);
             limit[b]=eq29::equalizer(unsigned(get(b,eq29::Type)),get(b,eq29::Frequency),get(b,eq29::Q),gain+range,rate);
         }
         draw->PushClipRect(lo,hi,true);
@@ -112,9 +140,14 @@ class DynamicEQUI final : public UI {
             draw->AddCircleFilled(pos,selected_==int(b)?9.f:7.f,color(b));
             if (selected_==int(b)) draw->AddCircle(pos,12,color(b,130),0,2);
             char number[4]; std::snprintf(number,sizeof(number),"%u",b+1);
-            draw->AddText(ImVec2(pos.x-3,pos.y-6),IM_COL32(12,20,26,255),number);
+            draw->AddText(ImVec2(pos.x-ImGui::CalcTextSize(number).x*.5f,pos.y-6),IM_COL32(12,20,26,255),number);
         }
         if (ImGui::IsItemHovered()) {
+            if(hovered<0 && !ImGui::IsMouseDown(0)) {
+                const float hz=freqAt(io.MousePos.x);
+                draw->AddLine(ImVec2(io.MousePos.x,lo.y),ImVec2(io.MousePos.x,hi.y),IM_COL32(180,195,210,90));
+                ImGui::SetTooltip("%.0f Hz | EQ %+.1f dB",hz,30-60*(io.MousePos.y-lo.y)/h);
+            }
             if (hovered>=0 && ImGui::IsMouseClicked(0)) {
                 selected_=dragging_=hovered;
                 for (auto f:{eq29::Frequency,eq29::Gain,eq29::Q}) editParameter(eq29::param(unsigned(dragging_),f),true);
@@ -151,19 +184,21 @@ protected:
         unsigned count=0;
         for (unsigned b=0;b<eq29::MaxBands;++b) if (get(b,eq29::Enabled)>.5f) ++count;
         ImGui::Text("EQ29 / DYNAMIC EQ"); ImGui::SameLine();
-        ImGui::TextDisabled("     %u / 8 bands   |   Stereo linked",count);
+        ImGui::TextDisabled("     %u / %u bands   |   Stereo linked",count,eq29::MaxBands);
         ImGui::SameLine(); checkbox(eq29::Bypass,"Bypass");
         ImGui::SameLine(); ImGui::SetNextItemWidth(150); slider(eq29::OutputGain,"Output","%.1f dB");
         graph(ImGui::GetContentRegionAvail().x,std::max(230.f,float(getHeight())*.48f));
         ImGui::TextDisabled("Drag: frequency / gain   |   Shift-drag or wheel: Q   |   Double-click: add band");
+        bool firstButton=true;
         for (unsigned b=0;b<eq29::MaxBands;++b) if (get(b,eq29::Enabled)>.5f) {
-            if (b) ImGui::SameLine();
+            if (!firstButton && ImGui::GetItemRectMax().x+75<ImGui::GetWindowPos().x+ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+            firstButton=false;
             char text[20]; std::snprintf(text,sizeof(text),"Band %u",b+1);
             ImGui::PushStyleColor(ImGuiCol_Button,selected_==int(b)?color(b,160):color(b,55));
             if (ImGui::Button(text)) selected_=int(b);
             ImGui::PopStyleColor();
         }
-        if (count) ImGui::SameLine();
+        if (count && ImGui::GetItemRectMax().x+75<ImGui::GetWindowPos().x+ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
         ImGui::BeginDisabled(count==eq29::MaxBands);
         if (ImGui::Button("+ Add")) add();
         ImGui::EndDisabled();
@@ -177,7 +212,9 @@ protected:
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(color(b)),"BAND %u",b+1); ImGui::SameLine();
             if (ImGui::Button("Remove")) { discrete(eq29::param(b,eq29::Enabled),0); selected_=-1; }
             ImGui::SameLine(); checkbox(eq29::param(b,eq29::Dynamics),"Dynamics enabled");
-            ImGui::SameLine(); ImGui::Text("Live change: %+.2f dB",p_[eq29::MeterBase+b]);
+            ImGui::SameLine(); checkbox(eq29::SidechainBase+b,"External SC");
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Use the host sidechain input for this band only. Unconnected input is silent.");
+            ImGui::SameLine(); ImGui::Text("Live change: %+.2f dB",p_[eq29::meter(b)]);
             if (ImGui::BeginTable("controls",3,ImGuiTableFlags_SizingStretchSame)) {
                 ImGui::TableNextColumn();
                 int type=int(get(b,eq29::Type)); ImGui::SetNextItemWidth(-1);
@@ -199,6 +236,11 @@ protected:
                 ImGui::EndTable();
             }
         } else ImGui::TextUnformatted("No active bands. Click + Add or double-click the graph.");
+        int spectrumView=int(p_[eq29::AnalyzerMode]);
+        ImGui::SetNextItemWidth(200);
+        if(ImGui::Combo("Spectrum",&spectrumView,"Off\0Input\0Output\0Input + Output\0"))
+            discrete(eq29::AnalyzerMode,float(spectrumView));
+        ImGui::SameLine();ImGui::TextDisabled("Blue: input | Amber: output | Right axis: dBFS");
         ImGui::TextDisabled("Green: live response   |   Gray: static EQ   |   Shading: available dynamic range");
         ImGui::End(); ImGui::PopStyleVar();
     }

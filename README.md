@@ -1,135 +1,158 @@
-# EQ29 — My Dynamic EQ (LV2 + VST2)
+# EQ29 — My Dynamic EQ 1.1
 
-A stereo LV2 and VST2 dynamic equalizer built with [DPF](https://github.com/DISTRHO/DPF)
+A stereo dynamic equalizer with **16 band slots**, a live input/output spectrum,
+and per-band external sidechain detection. Built with [DPF](https://github.com/DISTRHO/DPF)
 and its official [Dear ImGui integration](https://github.com/DISTRHO/DPF-Widgets).
-Four bands are active initially; eight fixed slots are available. Bell, low-shelf,
-and high-shelf filters each have a band-local, stereo-linked peak detector.
+The same DSP and editor build as **LV2, VST2 and VST3 on Linux, Windows and macOS**.
 
-## Build on Linux
+Four bands start enabled. All existing bell/low-shelf/high-shelf filters, dynamic
+compression/upward expansion, attack/release/threshold/ratio/range, output gain,
+bypass, draggable nodes, Q editing and session persistence remain available.
 
-Install a C++17 compiler, CMake 3.20+, Make, pkg-config, X11 and OpenGL headers.
+## Build
+
+Clone with pinned dependencies (including DPF's nested Pugl dependency):
+
+```sh
+git clone --recurse-submodules https://github.com/jcantos89/eq29.git
+cd eq29
+# If already cloned:
+git submodule update --init --recursive
+```
+
+Requirements: C++17 compiler, CMake 3.20+, OpenGL and the native window toolkit.
 On Debian/Ubuntu:
 
 ```sh
-sudo apt-get update
 sudo apt-get install build-essential cmake pkg-config libx11-dev libxext-dev \
   libxrandr-dev libxcursor-dev libxrender-dev libgl1-mesa-dev
-# Optional integration/GUI test dependencies:
+# Optional LV2 integration tests and virtual-display GUI tests:
 sudo apt-get install liblilv-dev lilv-utils xvfb xauth
-```
-
-Initialize the **pinned** dependencies, including DPF's nested Pugl dependency:
-
-```sh
-git submodule update --init --recursive
 make
 make test
 ```
 
-The LV2 output is **`build/bin/my_dynamic_eq.lv2/`**, containing `manifest.ttl`, attribution notices, the
-complete generated DSP/UI Turtle definitions, and separate DSP and GUI shared
-libraries. DPF generates control-port metadata directly from `initParameter()`;
-there is no manually maintained, potentially inconsistent second port list.
+The managed cloud image activates its local tool prefix automatically through
+`make`; `scripts/cloud-setup.sh` can reproduce that non-root Debian setup.
 
-Equivalent CMake commands:
+On **Windows**, install Visual Studio 2022's C++ desktop workload and CMake. In a
+Visual Studio developer terminal:
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel 2
-ctest --test-dir build --output-on-failure
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release --parallel 2
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-`make JOBS=4`, `make BUILD_DIR=build-debug CMAKE_FLAGS=-DCMAKE_BUILD_TYPE=Debug`,
-and `-DEQ29_BUILD_TESTS=OFF` are supported. CMake selects the host platform's
-DPF backend. Linux/X11 is tested here; Windows and macOS builds use the same DSP
-and ImGui editor with their native DPF window backends.
-
-## VST2 on Linux, Windows, and macOS
-
-The default build now creates **both LV2 and VST2**. Each operating system needs
-its own native binary; a Linux `.so` cannot run as a Windows DLL or macOS bundle.
-For a VST2-only build, no LV2 SDK or Lilv is required:
+On **macOS**, install Xcode Command Line Tools (`xcode-select --install`) and CMake
+(for example `brew install cmake`). For universal Apple Silicon + Intel plugins:
 
 ```sh
-cmake -S . -B build-vst2 -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_LV2=OFF
-cmake --build build-vst2 --config Release --parallel 2
-ctest --test-dir build-vst2 -C Release --output-on-failure
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
+cmake --build build --config Release --parallel 2
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-| Platform | Toolchain | VST2 output under `build-vst2/bin/` | Typical user install location |
+Equivalent native Linux CMake commands omit `CMAKE_OSX_ARCHITECTURES` and `-A x64`.
+Each OS needs its own binary; a Linux `.so` cannot run as a Windows DLL or macOS bundle.
+Use matching 64-bit hosts. Code signing/notarization is separate from compilation.
+
+All three formats are enabled by default. To build only one, disable the others:
+
+```sh
+cmake -S . -B build-vst3 -DCMAKE_BUILD_TYPE=Release -DEQ29_BUILD_LV2=OFF -DEQ29_BUILD_VST2=OFF
+cmake --build build-vst3 --config Release --parallel 2
+```
+
+Options: `EQ29_BUILD_LV2`, `EQ29_BUILD_VST2`, `EQ29_BUILD_VST3`, `EQ29_BUILD_TESTS`.
+At least one format must remain enabled. `make JOBS=4` and `make BUILD_DIR=build-debug
+CMAKE_FLAGS=-DCMAKE_BUILD_TYPE=Debug` are also supported.
+
+## Binaries and installation
+
+| Format | Linux output in `build/bin/` | Windows | macOS |
 | --- | --- | --- | --- |
-| Linux | GCC/Clang, X11/OpenGL development packages above | `my_dynamic_eq-vst2.so` | `~/.vst/` |
-| Windows | Visual Studio 2022 C++ desktop workload and CMake | `my_dynamic_eq-vst2.dll` | A VST2 folder configured in your DAW |
-| macOS | Xcode Command Line Tools and CMake | `my_dynamic_eq_vst2.vst` | `~/Library/Audio/Plug-Ins/VST/` |
+| LV2 | `my_dynamic_eq.lv2/` | Same bundle name, containing DLLs | Same bundle name, containing dylibs |
+| VST2 | `my_dynamic_eq-vst2.so` | `my_dynamic_eq-vst2.dll` | `my_dynamic_eq_vst2.vst/` |
+| VST3 | `my_dynamic_eq_vst3.vst3/` | Same bundle name, native Windows contents | Same bundle name, universal native contents when requested |
 
-On Windows run the CMake commands in a Visual Studio developer terminal; add
-`-A x64` to the configure command when using the Visual Studio generator.
-On macOS install CMake (for example `brew install cmake`) and run `xcode-select
---install` if necessary. For a universal macOS binary, add
-`'-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'` when configuring a **fresh** build folder;
-that architecture combination is not validated in the Linux environment.
-Use a 64-bit Cocoa-capable VST2 host on macOS. VST2 support must be enabled in
-the chosen DAW; hosts that only accept VST3 cannot load this format.
+Copy **whole bundles**, including their licenses. For standalone VST2 `.so`/`.dll`
+files, also copy `my_dynamic_eq-licenses/` next to the binary.
 
-Copy the Linux/Windows binary **and `my_dynamic_eq-licenses/`** from `bin/` to
-the host's configured VST2 folder. Copy the whole `.vst` bundle on macOS; its
-licenses are already inside. Rescan the plugin folder and select **My Dynamic EQ**.
-`cmake --install` stages VST2 into `<prefix>/lib/vst`; point your host there or
-copy it to the platform's user plugin directory.
+| OS | LV2 user folder | VST2 user folder | VST3 user folder |
+| --- | --- | --- | --- |
+| Linux | `~/.lv2/` | `~/.vst/` | `~/.vst3/` |
+| Windows | `%APPDATA%/LV2/` | A VST2 path configured in your host | `%LOCALAPPDATA%/Programs/Common/VST3/` or a host-configured path |
+| macOS | `~/Library/Audio/Plug-Ins/LV2/` | `~/Library/Audio/Plug-Ins/VST/` | `~/Library/Audio/Plug-Ins/VST3/` |
 
-No proprietary VST2 SDK download is needed: DPF includes clean-room VST2 headers,
-whose license is shipped alongside the plugin. The native CI workflow builds and
-runs DSP, VST2 load, state-reload, and audio tests on Linux, Windows and macOS,
-and uploads the platform binaries as workflow artifacts. Native CI results must
-be checked separately; only the Linux build and editor are validated locally.
+Host support and search paths vary, particularly LV2 on Windows/macOS. Rescan your
+host and select **My Dynamic EQ**. Linux uses X11/XWayland and OpenGL; DPF uses its
+native Windows and Cocoa backends on the other platforms.
 
-The VST2 version exposes **98 automatable input parameters**. Session state uses
-the host's standard normalized parameter-array save/restore, including disabled
-band slots. Live meters are sent internally to the custom editor and are not
-exposed as writable VST2 parameters. `src/PortMapping.hpp` places VST2 inputs
-before outputs as required by DPF while preserving the released LV2 port layout.
-Both formats use exactly the same engine, editor, parameter ranges and defaults.
+`cmake --install build --config Release --prefix stage` stages everything into
+`stage/lib/{lv2,vst,vst3}`. `make install` uses `~/.local` on Linux; configure your
+host's search paths accordingly or copy the staged bundles to the folders above.
 
-## Install and use
+The GitHub Actions workflow builds all three formats on Linux, Windows and macOS
+(universal on macOS), tests native loading/audio/state, and uploads each platform's
+`build/bin/` as an artifact. Check the actual workflow result before treating a
+Windows/macOS build as verified; local validation here is on Linux. DPF supplies
+clean-room VST2/VST3 interfaces; no separate proprietary SDK download is needed.
 
-```sh
-make install                 # ~/.local/lib/lv2/my_dynamic_eq.lv2
-# Or use the traditional LV2 discovery directory:
-mkdir -p ~/.lv2
-cp -a build/bin/my_dynamic_eq.lv2 ~/.lv2/
-```
-
-In Ardour or Carla, rescan LV2 plugins, insert **My Dynamic EQ** on a stereo
-track, and open its custom editor. Plugin URI:
-`https://github.com/jcantos89/eq29#my_dynamic_eq`.
-If the host does not scan `~/.local/lib/lv2`, use `~/.lv2` or configure `LV2_PATH`.
-The GUI requires an X11 display (including XWayland) and OpenGL 2-compatible rendering.
+## Editor and live spectrum
 
 - **+ Add** enables a free slot; **Remove** disables the selected slot. Double-click
-  an empty place on the graph to add a bell there. All eight slots can be removed.
-- Drag a node horizontally for frequency and vertically for static gain. Shift-drag
-  vertically or scroll over a node to change Q. The panel offers precise controls.
-- **Compression** reduces the band's gain when its detector exceeds Threshold.
-  **Upward expansion** increases its gain above Threshold. Range is the maximum
-  change in dB, not a replacement for static Gain. Ratio 1:1 leaves gain unchanged.
-- **Dynamics enabled** switches just that band's dynamics; static EQ remains active.
-- Green is the live response reconstructed from DSP output meters; gray is the
-  requested static response. Shading shows the full available dynamic range across
-  all enabled bands. The plot is a filter response, not an FFT spectrum analyzer.
-- Global Bypass returns the original stereo input, including bypassing Output gain.
-  Gain, enable changes and bypass are smoothed. Filter topology changes crossfade.
+  the graph to add a bell. Up to 16 bands can be active, and all can be removed.
+  The band buttons wrap when space is limited.
+- Drag a node horizontally for frequency and vertically for gain. Shift-drag
+  vertically or scroll over a node to change Q. The panel provides precise values.
+  Hovering the graph shows its frequency and EQ gain.
+- **Green** is the live filter response; **gray** is the requested static response.
+  Shading shows the available dynamic change. These use the left EQ-gain axis.
+- **Blue** is the measured input spectrum; **amber** is the measured output
+  spectrum. They share the EQ's logarithmic frequency axis and use the separate
+  **right dBFS axis**, so you can see the audio frequencies under each EQ node.
+- **Spectrum** selects Off, Input, Output, or Input + Output. This setting is saved
+  with the session. Off stops FFT work. The analyzer uses a Hann-windowed 4096-point
+  stereo FFT with 50% overlap and 64 logarithmic display bands per trace. Stereo
+  antiphase audio stays visible; spectra are not computed from a mono sum.
+- Spectrum amplitude is peak dBFS, with a 24 dB/second display fall. FFT frequency
+  resolution is sample rate / 4096, so nearby low frequencies can share a display
+  peak. This is live measured audio, separate from the analytic filter curve.
+- **Dynamics enabled** disables just a band's dynamics. Static EQ remains active.
+  Global **Bypass** returns the original stereo input, bypassing Output gain too.
+
+## External sidechain
+
+The plugin has four audio inputs: **main L/R**, followed by **sidechain L/R**;
+it always produces just the main stereo output. Select a band and enable
+**External SC** to drive that band's detector from the external input. Other
+bands can continue to detect the main input independently. The sidechain still
+passes through the selected band's detector filter at its Frequency and Q.
+
+1. Insert the EQ on the track you want to process.
+2. Route the trigger track to the plugin's sidechain input in your host.
+3. Enable **External SC** on the desired band, then set Threshold, Ratio,
+   Attack, Release and Range. The live gain meter/green curve show the response.
+
+**VST3** exposes a native stereo auxiliary sidechain bus. **LV2** marks the two
+extra ports with `lv2:isSideChain`. **VST2** exposes flat audio inputs 3/4; route
+them using the host's four-channel/plugin-pin routing if supported. Some VST2
+hosts do not expose external sidechains; VST3 is preferable there.
+
+An unconnected/silent external sidechain causes no above-threshold action; it
+never silently falls back to self-detection. Disable External SC for the original
+self-detected behavior. Sidechain audio is never mixed into the output.
 
 ## DSP and real-time behavior
 
-`src/Biquad.hpp` implements normalized RBJ bell/shelf filters and detector filters.
-Each bell detector is a constant-peak bandpass at the band's frequency and Q;
-shelf detectors are second-order low/highpasses at the shelf frequency.
-All detectors take the original input, so a preceding EQ does not spuriously
-trigger another band. The larger absolute detector sample from the two channels
-drives a shared peak envelope, avoiding stereo-image movement.
+`Biquad.hpp` implements RBJ bell/shelf EQ and detector filters. Bell detectors are
+constant-peak bandpasses at the band's frequency/Q; shelves use low/highpasses.
+Each detector reads either original main input or external sidechain, independent
+of other EQ bands. The larger absolute detector sample across L/R drives one
+linked peak envelope, preserving stereo balance.
 
-The attack/release controls set one-pole peak-envelope time constants. For an
-envelope level `L`, threshold `T`, ratio `R`, and positive maximum range `D`:
+For envelope level `L`, threshold `T`, ratio `R`, and maximum range `D` in dB:
 
 ```
 compression change = -min(D, max(0, L - T) * (1 - 1/R))
@@ -137,87 +160,61 @@ expansion change   = +min(D, max(0, L - T) * (R - 1))
 EQ gain            = static gain + dynamic change
 ```
 
-The gain change has an additional 1 ms smoothing stage. Coefficients update every
-16 samples, with frequency, Q and static gain smoothed over 10 ms. Topology changes
-crossfade for 5 ms. The control schedule persists across host blocks. Parameters
-are clamped and nonfinite inputs are sanitized. There is no lookahead or latency,
-no allocation or locking in the audio callback, and no internal brickwall limiter.
-Extreme boosts can exceed 0 dBFS; leave output headroom.
+Ratio 1:1 leaves the gain unchanged. Attack/release control envelope time
+constants; the gain has an additional 1 ms smoothing stage. Coefficients update
+every 16 samples, with 10 ms frequency/Q/static-gain smoothing and a 5 ms topology
+crossfade. Bypass is smoothed. There is no lookahead/latency or brickwall limiter;
+leave headroom for boosts.
 
-## Ports and session state
+Audio processing, sidechain detection and FFT use fixed storage with no locks,
+allocations, file/network I/O or UI access. Spectrum/meter data travels through
+DPF's host parameter bridge, including separate-process LV2 editors; no unsafe
+DSP/UI shared pointer is needed.
 
-Two audio inputs and two outputs precede the controls. All names, ranges and
-defaults live in `src/Parameters.hpp`; each slot has twelve stable input controls:
+## Parameters and session compatibility
 
-| Symbol suffix | Range |
-| --- | --- |
-| `enabled` | 0 / 1 |
-| `type` | 0 bell, 1 low shelf, 2 high shelf |
-| `frequency` | 20–20000 Hz; DSP clamps to 0.45 × sample rate |
-| `gain` | −24 to +24 dB |
-| `q` | 0.15–12 |
-| `threshold` | −72 to 0 dB |
-| `ratio` | 1–20 |
-| `attack` | 0.1–200 ms |
-| `release` | 5–2000 ms |
-| `range` | 0–24 dB |
-| `mode` | 0 compression, 1 upward expansion |
-| `dynamics` | 0 / 1 |
+Each band retains its 12 controls: Enabled, Type (bell/low/high shelf), Frequency
+(20–20000 Hz), Gain (±24 dB), Q (0.15–12), Threshold (−72–0 dB), Ratio (1–20),
+Attack (0.1–200 ms), Release (5–2000 ms), Range (0–24 dB), Mode (compression/upward
+expansion) and Dynamics enabled. Frequency clamps to 0.45 × sample rate.
+Each band also has an External SC switch. Output gain ranges from −24 to +12 dB.
 
-Symbols are `band1_enabled`, …, `band8_dynamics`. Eight read-only
-`bandN_dynamic_gain` meters, global `bypass` and `output_gain`, and a read-only
-`sample_rate` port bring the total to 107 control ports (111 including audio).
+There are **211 persistent input controls** and **145 output controls** (16 dynamic
+gain meters, sample rate and 128 spectrum values): 356 controls plus six audio
+ports in LV2. Spectrum data and filter histories are transient and not saved.
+The active band count is the sum of the 16 Enabled controls.
 
-**Every persistent setting is a standard LV2 input control port.** Hosts save and
-restore these values with the session using LV2's normal port-state mechanism.
-The active band count is the sum of the eight `enabled` ports, so addition/removal,
-filter types and all dynamics settings survive reloads without a private blob or
-atom/state worker. Disabled slots also retain their controls; adding through the
-GUI deliberately resets the reused slot to defaults. Selection, meter history and
-filter delay memories are ephemeral UI/runtime data.
+LV2 symbols for existing bands/globals remain unchanged; additional bands,
+sidechain switches and spectrum controls are appended in the parameter namespace.
+The two added audio inputs move physical control-port indices: LV2 hosts restore
+by **symbol**, as usual. The first 98 VST2 normalized input parameter indices
+remain identical to version 1.0, including Bypass/Output gain. Added band slots
+start disabled and sidechain switches start off. Hosts can restore old sessions
+without new bands changing their sound; a host may need its pin routing reviewed
+after discovering the additional inputs.
 
-The integration test serializes every input control to Turtle using Lilv state,
-reloads it, verifies exact values including a removed and a newly enabled band,
-and checks actual output audio from the restored plugin.
+LV2 hosts save input port values; VST2 hosts save normalized input parameter
+arrays; VST3 serializes input parameters by symbol through DPF's component state.
+All per-band detector selections and the spectrum-view mode are included.
 
-## Validation
+## Tests
 
 ```sh
 make test
-# Optional: instantiate the VST2 editor and exercise automation under X11:
-xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
-  ./build/eq29_vst2_tests "$PWD/build/bin/my_dynamic_eq-vst2.so" --ui
-# Instantiate the embedded LV2 GUI and render under a virtual display:
-xvfb-run -a -s '-screen 0 1280x900x24 +extension GLX' \
-  ./build/eq29_lv2_tests "$PWD/build/bin/my_dynamic_eq.lv2/" --ui
-# Host discovery:
-LV2_PATH="$PWD/build/bin" lv2ls
+# Linux GUI startup and interactions:
+xvfb-run -a ./build/eq29_lv2_tests "$PWD/build/bin/my_dynamic_eq.lv2/" --ui
+xvfb-run -a ./build/eq29_vst2_tests "$PWD/build/bin/my_dynamic_eq-vst2.so" --ui
+xvfb-run -a ./build/eq29_vst3_tests "$PWD/build/bin/my_dynamic_eq_vst3.vst3/Contents/x86_64-linux/my_dynamic_eq_vst3.so" --ui
 ```
 
-The core suite checks static response against analytic coefficients, compression,
-expansion, off-band rejection, stereo linking, bypass, parameter sanitation,
-block partition invariance, reset, and eight-band automation at extreme settings.
-The suite runs at 44.1, 48, 96 and 192 kHz. The Lilv test is included when development
-headers are found; CMake reports whether it is available. `--ui` needs X11 and
-OpenGL; ordinary `make test` needs no display.
+The last command uses the x86-64 Linux bundle path. CTest uses the native target
+path automatically on every platform. DSP, VST2 and VST3 tests require no display;
+the optional Lilv/LV2 test is built on Linux when development headers are present.
+See `VALIDATION.md` for actual checks and platform limitations.
 
-The virtual-display test verifies LV2 embedding, rendered pixels, adding/removing
-bands, and node dragging through actual X11 mouse events and host parameter writes. An interactive
-Ardour/Carla audition and session save/reopen remain recommended before release;
-those specific applications are not assumed to have been tested by this harness.
+Source: `Engine.hpp` (DSP), `Spectrum.hpp` (FFT), `Parameters.hpp`/`PortMapping.hpp`
+(stable host controls), `PluginDSP.cpp` (DPF entry points), `PluginUI.cpp` (ImGui),
+`tests/` (DSP and native format hosts), and `.github/workflows/build.yml` (platform CI).
 
-## Files and dependencies
-
-- `src/PluginDSP.cpp`: DPF plugin entry point and LV2 parameter descriptions.
-- `src/Engine.hpp`, `src/Biquad.hpp`: fixed-storage stereo DSP and filter response.
-- `src/PluginUI.cpp`: ImGui editor, gestures, response graph and parameter bridge.
-- `src/PortMapping.hpp`: VST2 parameter-order adapter; LV2 indices stay unchanged.
-- `tests/`: DSP regression tests and LV2/VST2 native host/state/GUI integration harnesses.
-- `.github/workflows/build.yml`: native Linux, Windows and macOS builds and artifacts.
-- `dpf/`, `widgets/`: upstream Git submodules pinned by this repository.
-- `scripts/cloud-setup.sh`: optional non-root Debian cloud dependency setup.
-
-See `VALIDATION.md` for the checks actually performed and their limits.
-
-The original project license is CC0-1.0 (`LICENSE`). DPF/DPF-Widgets and their
-embedded dependencies retain their own license notices; see their license files.
+The project is CC0-1.0 (`LICENSE`). DPF, ImGui, fonts and embedded interfaces keep
+their own licenses, included in each binary distribution.
